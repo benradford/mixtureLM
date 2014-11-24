@@ -1,0 +1,102 @@
+---
+title: "Mixture of Linear Regressions"
+author: "Benjamin Radford"
+date: "Saturday, November 22, 2014"
+output: html_document
+runtime: shiny
+---
+
+```{r, echo=F}
+generateData <- function(k=4, error=0.5, n=100)
+{
+  slopes <- rnorm(k, 0, 3)
+  intercepts <- rnorm(k, 0, 3)
+  errors <- rnorm(n, 0, error)
+  
+  x <- data.frame(intercept=rep(1,n), x=rnorm(n, 0, 1), k=rep(1:k, length.out=n), y=NA)
+
+  for(ii in 1:k)
+  {
+    x$y[x$k==ii] <- x$intercept[x$k==ii]*intercepts[ii] + x$x[x$k==ii]*slopes[ii]
+  }
+  
+  x$y <- x$y + errors
+  
+  return(list(x, slopes, intercepts))
+}
+
+mixlm <- function(formula, data, k, sims=100)
+{
+  data <- model.frame(formula,data)
+  y <- model.response(data)
+  x <- model.matrix(formula,data)
+  n <- length(y)
+  
+  # INITIATE PARAMETERS
+  beta <- matrix(rnorm(k*ncol(x), 0, 1), ncol=k, nrow=ncol(x), byrow=T)
+  sigma <- matrix(1, ncol=k, nrow=ncol(x))
+  pi <- rep(1/k, k)
+  phi <- matrix(1/k, ncol=k, nrow=n)
+  w <- matrix(1/k, ncol=k, nrow=n)
+  beta_list <- array(NA, dim=c(ncol(x),k,sims+1))
+  beta_list[,,1] <- beta
+  
+  for(j in 1:sims)
+  {
+    # E-STEP (EXPECTATION)
+    # VECTORIZE THIS LATER
+    for(i in 1:k)
+    {
+      phi[,i] <- dnorm(y, x%*%beta[,i], sqrt(sigma[,i]))
+    }
+    
+    for(i in 1:n)
+    {
+      w[i,] <- (phi[i,] * pi) / sum(phi[i,] * pi)
+    }
+  
+    # M-STEP (MAXIMIZATION)
+    pi <- colSums(w)/n
+  
+    for(i in 1:k)
+    {
+      w_mat <- diag(w[,i], nrow=n, ncol=n)
+      beta[,i] <- (solve(t(x) %*% w_mat %*% x)) %*% t(x) %*% w_mat %*% y
+      
+      sigma[i] <- ( w[,i] %*% (y - x %*% beta[,i])^2 ) / sum(w[,i])
+    }
+    if(sum(is.nan(beta))>0) break
+    beta_list[,,j+1] <- beta
+  }
+  return(list(beta, sigma, beta_list))
+}
+
+```
+
+```{r, echo=FALSE}
+
+sidebarPanel(
+  sliderInput("iteration","Iteration",min=1,max=101,step=1,value=101,
+              animate=animationOptions(interval = 200, loop = FALSE, playButton = NULL, pauseButton = NULL)),
+  sliderInput("classes","Classes",min=1,max=5,step=1,value=3),
+  sliderInput("error","Error",min=0,max=0.5,step=0.05,value=0.05),
+  actionButton("refresh", "Refresh")
+)
+
+reactiveStuff <- reactive({
+  input$refresh
+  generateData(k=isolate(input$classes), error=isolate(input$error))
+})
+
+renderPlot({
+  data <- reactiveStuff()
+  results <- mixlm(y~x, data[[1]], k=max(data[[1]]$k), sims=100)
+  
+  par(mar=c(4.1,4.1,0,0))
+  col <- c("#66c2a5","#fc8d62","#8da0cb","#e78ac3","#a6d854")
+  plot(data[[1]]$x, data[[1]]$y, las=1, frame=F, xlab="X",ylab="Y",main="", type="n")
+  res <- results[[3]][,,input$iteration]
+  apply(res, 2, FUN=function(x)(abline(x[1], x[2], lwd=2, col="#AAAAAA")))
+  points(data[[1]]$x, data[[1]]$y, pch=21, bg=col[data[[1]]$k], cex=2)
+}, width=400, height=400)
+```
